@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>이미지 → SVG 애니메이션 제작 기록</title>
+<style>
+  :root {
+    --bg: #faf8f5; --fg: #1f1c19; --muted: #6b645c; --line: #e4ded6;
+    --card: #ffffff; --accent: #b4521f; --accent2: #2d5d8a; --code: #f3efe9;
+    --ok: #2f7d4f; --bad: #b3372d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #181614; --fg: #ece7e1; --muted: #a39b91; --line: #34302b;
+            --card: #211e1b; --accent: #f08a4b; --accent2: #7fb2e5; --code: #2a2622;
+            --ok: #6cc38e; --bad: #f0806f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.7 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 { font-size: 21px; margin: 48px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 17px; margin: 28px 0 8px; color: var(--accent); }
+  p, li { max-width: 78ch; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code);
+         padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+        font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--line); }
+  pre code { background: none; padding: 0; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 18px; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--code); font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 14px 0; }
+  .pipe { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+  .pipe .n { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  .pipe .n b { display: block; color: var(--accent2); }
+  .pipe .a { color: var(--muted); }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 10px; margin-right: 4px; }
+  .tag.ok { color: var(--ok); border: 1px solid var(--ok); }
+  .tag.bad { color: var(--bad); border: 1px solid var(--bad); }
+  .lesson { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 12px 0; }
+  .timeline { position: relative; height: 64px; margin: 18px 0 30px; border-radius: 6px;
+              background: var(--code); border: 1px solid var(--line); }
+  .seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center;
+         font-size: 12px; text-align: center; line-height: 1.2; border-right: 1px solid var(--line); padding: 0 2px; }
+  .ticks { position: relative; height: 16px; font-size: 11px; color: var(--muted); margin-top: -26px; }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  small, .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>이미지 → SVG 애니메이션 제작 기록</h1>
+<p class="lead">추석 인사 일러스트(1536×1024 WebP)를 “로봇이 부침개를 집어 먹는 무한 반복 SVG 애니메이션”으로 변환한 과정. 2026-09-23 작업. 비슷한 “정지 이미지의 일부를 움직이게 만들기” 작업의 참고용.</p>
+
+<h2>1. 결과물과 구성</h2>
+<div class="wrap"><table>
+  <tr><th>파일</th><th>내용</th></tr>
+  <tr><td><code>chuseok-robot.svg</code></td><td>최종 결과. 레이어 이미지를 base64 WebP로 내장한 단독 SVG(약 370 KB). SMIL 애니메이션이라 파일을 직접 열거나 <code>&lt;img&gt;</code>로 넣어도 재생된다.</td></tr>
+  <tr><td><code>index.html</code></td><td>SVG를 가운데 띄워 보여 주는 페이지.</td></tr>
+  <tr><td><code>source/chuseok.webp</code></td><td>원본 이미지.</td></tr>
+  <tr><td><code>build/layers.py</code></td><td>원본 → 레이어 분리 + 배경 복원. 결과를 <code>build/layers/</code>에 PNG와 <code>meta.json</code>으로 저장(<code>.gitignore</code> 처리).</td></tr>
+  <tr><td><code>build/build_svg.py</code></td><td>레이어 → 애니메이션 SVG 조립(타임라인·벡터 요소·효과).</td></tr>
+</table></div>
+
+<pre><code># 다시 빌드 — build.sh 가 아래 두 줄을 순서대로 실행한다
+./build.sh
+
+# 또는 직접
+uv run --with pillow --with numpy --with opencv-python-headless python build/layers.py
+uv run --with pillow python build/build_svg.py</code></pre>
+
+<div class="pipe">
+  <div class="n"><b>source/chuseok.webp</b>원본 한 장</div><span class="a">→</span>
+  <div class="n"><b>layers.py</b>마스크 · 배경 복원 · 스프라이트</div><span class="a">→</span>
+  <div class="n"><b>build/layers/</b>bg · arm · jeon · eye×2 · dot×2 · meta.json</div><span class="a">→</span>
+  <div class="n"><b>build_svg.py</b>SMIL 타임라인 · 벡터 젓가락/입 · 효과</div><span class="a">→</span>
+  <div class="n"><b>chuseok-robot.svg</b>단독 파일</div>
+</div>
+
+<h2>2. 전체 접근 방식</h2>
+<p>로봇 전체를 벡터로 다시 그리면 3D 렌더 느낌이 사라진다. 그래서 <b>원본 래스터를 최대한 그대로 쓰고, 움직일 부분만 떼어 내 변형</b>하는 컷아웃 방식을 택했다.</p>
+<ol>
+  <li><b>움직일 부분을 잘라낸다</b> — 팔(소매+커프+장갑), 부침개, 눈·볼 점.</li>
+  <li><b>잘라낸 자리를 메운다</b> — 팔이 내려가면 원래 가려져 있던 몸통·턱·화면 아래 가장자리가 드러난다. 이 부분을 복원하는 것이 작업의 대부분이었다.</li>
+  <li><b>원본에 없는 것은 벡터로 그린다</b> — 젓가락(오므리는 동작 때문에), 화면의 입, 부스러기, 김, 낙엽, 빛.</li>
+  <li><b>SVG 안에서 변형한다</b> — 팔은 팔꿈치 기준 회전, 부침개는 팔 안에서 역회전+납작하게, 한입 자국은 mask로 처리한다.</li>
+</ol>
+<p>핵심 확인 기준은 <b>팔 각도 0°에서 원본과 픽셀 단위로 같아 보여야 한다</b>는 것이다. 복원한 배경은 팔이 움직일 때만 드러난다.</p>
+
+<h2>3. 작업 환경에서 알게 된 것</h2>
+<ul>
+  <li>시스템 Python에는 PIL·OpenCV가 없었다. <code>uv run --with pillow --with numpy --with opencv-python-headless python …</code>로 설치 없이 실행했다.</li>
+  <li><code>dwebp</code>, <code>magick</code>도 있었다. WebP→PNG 변환과 첫 크롭에 썼다.</li>
+  <li>Claude 데스크톱 앱의 브라우저 패널은 로컬 HTML을 <code>data:</code> 스냅샷으로 연다. 그래서 <code>index.html</code>이 상대경로의 SVG를 불러오지 못한다. <b>SVG 파일을 직접 열어</b> 확인했다(SVG가 이미지를 모두 내장하고 있어서 가능했다).</li>
+  <li>이 패널의 screenshot <code>zoom</code>(영역 확대)은 지원되지 않는다. 대신 JS로 <b>SVG의 <code>viewBox</code>를 잠시 좁혀</b> 원하는 부분을 크게 봤다.</li>
+</ul>
+
+<h2>4. 단계별 과정</h2>
+
+<h3>4-1. 좌표 측정</h3>
+<p>눈대중 대신 <b>원본 좌표 격자를 덧그린 확대 크롭</b>(보조 스크립트 <code>grid.py</code>: 20px 간격 선, 100px마다 다른 색, 좌표 라벨)을 만들어 보면서 폴리곤 좌표를 잡았다. 경계가 애매한 곳은 <b>밝기값을 표로 출력</b>해 정확한 위치를 찾았다. 화면 아래 가장자리 곡선이 그렇게 찾은 예다.</p>
+<div class="lesson">교훈: 3D 렌더 이미지의 곡선(화면 테두리 등)은 “기울어진 직선”으로 가정하면 틀린다. 결국 밝기값을 찍어 실제 곡선을 점으로 받아 적었다.</div>
+
+<h3>4-2. 마스크</h3>
+<div class="wrap"><table>
+  <tr><th>대상</th><th>방법</th><th>메모</th></tr>
+  <tr><td>팔</td><td>손으로 잡은 폴리곤 25점, 4배 슈퍼샘플링으로 안티앨리어싱(<code>poly_mask</code>)</td><td>아래쪽은 접시 테두리를 따라 잘라, 회전할 때 테두리 조각이 딸려 오지 않게 했다.</td></tr>
+  <tr><td>젓가락</td><td>두께 8px 직선 2개(<code>line_mask</code>)</td><td>배경에서 지우는 데만 쓴다. 실제 젓가락은 벡터로 다시 그렸다.</td></tr>
+  <tr><td>부침개</td><td>HSV 색 분할(H 8–35, <b>S&gt;135</b>, V&gt;110) → closing → 가장 큰 연결 성분 → 구멍 메우기</td><td>처음 S&gt;90으로 하니 <b>복숭아색 조명을 받은 흰 테두리까지 잡혔다</b>. 겹쳐 칠한 확인 이미지를 보고 알아냈다. floodFill로 구멍을 메울 때는 테두리를 1px 덧대야 모서리가 잘못 채워지지 않는다.</td></tr>
+  <tr><td>눈·볼 점</td><td>밝기&gt;110인 연결 성분을 가장 가까운 기준점(seed)에 배정하고, 그 스프라이트의 창 안에 완전히 들어오는 것만 채택</td><td>뒤에 나오는 “시각 검증에서 잡은 버그” 참고.</td></tr>
+</table></div>
+
+<h3>4-3. 배경 복원 (가장 오래 걸린 부분)</h3>
+<p>메워야 할 곳은 팔 아래(몸통·어깨·턱), 부침개 아래(얼굴 화면 가장자리·흰 테두리), 젓가락 자리, 눈 자리다. 영역마다 방법을 다르게 썼다.</p>
+
+<div class="card">
+<p><b>① 눈 지우기</b> — 어두운 화면 위의 밝은 눈은 Telea 인페인팅으로 쉽게 지워진다. 빛번짐까지 지우도록 14px 팽창한 마스크를 썼다. 눈은 나중에 스프라이트로 다시 얹는다. <span class="tag ok">잘 됨</span></p>
+<p><b>② 몸통: 좌우 반전 복사</b> — 로봇 몸이 거의 대칭이라 <b>오른쪽 몸(한복·위팔)을 반전해 왼쪽 빈자리에</b> 넣었다.</p>
+<ul>
+  <li><span class="tag bad">실패</span> 얼굴이 약 12° 기울어 보여 기울어진 축으로 반사했더니, 중심축에서 멀어질수록 세로로 크게 밀려(200px 거리에서 약 90px) 소매 대신 배경이 들어왔다.</li>
+  <li><span class="tag ok">해결</span> <b>수직축 x=546</b>으로 반사. 반전하면서 오른쪽의 “쉬고 있는 손”도 복사되지만, 내린 팔이 모든 각도에서 가려 준다.</li>
+</ul>
+<p><b>③ 얼굴 화면 아래 가장자리와 흰 테두리</b></p>
+<ul>
+  <li><span class="tag bad">실패</span> 옆에서 띠를 밀어 복사: 원본 영역이 부침개와 겹치거나 볼 점이 딸려 왔다.</li>
+  <li><span class="tag bad">실패</span> 얼굴 전체를 기울어진 축으로 반사: 화면 가장자리 위치가 틀렸다.</li>
+  <li><span class="tag bad">실패</span> Telea 인페인팅: 흰색이 검은 화면 쪽으로 번졌다(마스크 경계를 따라 흰 픽셀을 끌어옴).</li>
+  <li><span class="tag ok">해결</span> <b>화면 경계 곡선 E(x)와 턱 곡선 C(x)를 점으로 직접 정의</b>했다. E 위쪽(검은 화면)과 E~C 사이(흰 외피)를 각각 <b>같은 색 영역의 알려진 픽셀만으로</b> 채웠다(<code>nc_fill</code>: 정규화 컨볼루션). 두 채움은 <code>clip(y − E(x) + 0.5)</code> 가중치로 안티앨리어싱 합성하고, C 아래는 반전 몸통에 턱 그림자(최대 28%)를 얹었다.</li>
+</ul>
+<p><b>④ 어깨 외곽</b> — 반전한 소매가 팔 폴리곤 경계에서 직선으로 잘려 보였다. 둥근 어깨 폴리곤(<code>SHOULDER</code>) 밖은 단풍 배경으로 채웠다.</p>
+<ul>
+  <li><span class="tag bad">실패</span> 다중 스케일 <code>nc_fill</code>로 단풍을 채우니 동심원 띠가 생겼다 → 채도 높은 단풍 픽셀만 참조하는 Telea로 교체.</li>
+  <li><span class="tag bad">실패·되돌림</span> “반전 픽셀이 단풍색이면 배경으로 처리”하는 판별: 따뜻한 조명을 받은 소매를 단풍으로 오인해 구멍이 났다.</li>
+</ul>
+<p><b>⑤ 남은 곳</b> — Telea로 채운 뒤, 구멍 경계만 가우시안으로 블렌딩해(<code>feather_comp</code>) 원본과 이었다.</p>
+</div>
+
+<div class="lesson">교훈: 한 가지 인페인팅으로 다 하려 하지 말고, <b>영역의 성격(대칭 구조 / 단색 면 / 경계선 / 배경 질감)에 따라 방법을 나눈다</b>. 색이 다른 두 면이 맞닿은 곳은 경계선을 직접 정의하고 면마다 따로 채워야 번지지 않는다.</div>
+
+<h3>4-4. 전경 레이어</h3>
+<ul>
+  <li><code>arm.png</code>: 팔 마스크를 알파로 한 RGBA 크롭(270,540)–(490,760).</li>
+  <li><code>jeon.png</code>: 부침개 위를 가로지르던 젓가락 픽셀을 부침개 픽셀만으로 인페인팅해 지웠다(새 젓가락은 벡터로 앞에 그림).</li>
+  <li><code>eyeL/eyeR/dotL/dotR.png</code>: 부드러운 알파의 빛 스프라이트. RGB는 “자기 빛번짐만 남기고 다른 눈은 지운 이미지”에서 잘랐다. 박스는 알파가 0이 되는 지점까지 넓혔다.</li>
+</ul>
+
+<h3>4-5. 동작 설계와 미리보기</h3>
+<p>SVG를 만들기 전에 Python 합성기(<code>preview.py</code>)로 <b>팔 각도 0°/20°/40°</b>와 <b>집는 자세</b>를 정지 이미지로 렌더해 확인했다.</p>
+<ul>
+  <li>팔꿈치 회전축 <code>PIV=(300,705)</code>, 40° 회전하면 부침개 중심이 (572,542)에서 (613,755)로, 즉 접시의 부침개 더미 위로 간다.</li>
+  <li>집는 순간 들고 있는 부침개가 더미와 똑같이 보이도록, 팔 회전을 상쇄하는 <b>역회전</b>과 <b>세로 0.52배 납작하게</b>를 적용했다. 접시에 부침개를 따로 복사해 두지 않고, 들고 있는 부침개를 집는 순간 서서히 나타나게 했다.</li>
+</ul>
+
+<h3>4-6. SVG 조립</h3>
+<p>레이어 구조(아래에서 위로): 배경 → 달·등불 빛 → 김 → 눈(그룹) → 볼 점 → 입 → <b>팔 그룹</b>[아래 젓가락 → 부침개 → 위 젓가락 → 팔 래스터] → 부스러기 → 낙엽.</p>
+<pre><code>&lt;g id="arm"&gt; rotate(a, 300, 705)
+  &lt;g&gt; rotate(pinch, 430, 585)  아래 젓가락 &lt;/g&gt;
+  &lt;g transform="translate(572 542)"&gt;
+    &lt;g&gt; rotate(-a)                     ← 팔 회전 상쇄
+      &lt;g&gt; scale(1, s)                  ← 접시 위에서 납작하게
+        &lt;g transform="translate(-572 -542)" mask="url(#bite)"&gt; opacity, jeon.png &lt;/g&gt;
+  위 젓가락, arm.png
+&lt;/g&gt;</code></pre>
+<ul>
+  <li>SMIL은 요소 하나당 transform 애니메이션이 하나만 적용되므로, <b>변형마다 &lt;g&gt;를 하나씩 중첩</b>한다.</li>
+  <li>모든 애니메이션은 <code>dur="8s" repeatCount="indefinite"</code>를 공유하고 <code>keyTimes</code>로 시점을 맞춘다. 헬퍼 <code>kf()/at()</code>가 (시간, 값, 이징) 목록을 values·keyTimes·keySplines 문자열로 바꾼다.</li>
+  <li>한입 자국: mask 안의 검은 원의 <code>r</code>을 <code>calcMode="discrete"</code>로 0→R로 바꾸고, 부침개가 안 보이는 4.0s에 0으로 되돌린다. discrete에서는 마지막 keyTime이 1이 아니어도 된다.</li>
+  <li>입: 원본에는 입이 없어 새로 추가했다. 벌린 입 / 씹는 입(ω 모양, 세로 스케일 진동) / 미소 세 가지를 opacity로 전환하고, 파란 빛 필터(<code>#glow</code>)를 준다.</li>
+  <li>분위기 효과: 떡국 김(블러 처리한 선이 올라가며 사라짐), 단풍잎 6장(animateMotion + 회전 + 좌우 스케일 뒤집기), 등불·달 빛(<code>mix-blend-mode:screen</code>).</li>
+</ul>
+
+<h3>8초 타임라인</h3>
+<div class="timeline">
+  <div class="seg" style="left:0;width:36%;background:rgba(240,138,75,.18)">한입 ×3<br>+ 씹기</div>
+  <div class="seg" style="left:36%;width:10%;background:rgba(127,178,229,.15)">씹기<br>마무리</div>
+  <div class="seg" style="left:46%;width:11.5%;background:rgba(47,125,79,.15)">팔 내리기<br>0→40°</div>
+  <div class="seg" style="left:57.5%;width:4.4%;background:rgba(180,82,31,.25)">집기</div>
+  <div class="seg" style="left:61.9%;width:18%;background:rgba(47,125,79,.15)">들어 올리기<br>40→0°</div>
+  <div class="seg" style="left:79.9%;width:20.1%;background:rgba(127,178,229,.15)">기대 · 입 벌림</div>
+</div>
+<div class="ticks"><span style="left:0%">0s</span><span style="left:4.75%">0.38</span><span style="left:18.25%">1.46</span><span style="left:32%">2.56</span><span style="left:46%">3.7</span><span style="left:57.75%">4.62</span><span style="left:76.25%">6.1</span><span style="left:100%">8s</span></div>
+
+<div class="wrap"><table>
+  <tr><th>시점(s)</th><th>팔 각도</th><th>일어나는 일</th></tr>
+  <tr><td>0.38 / 1.46 / 2.56</td><td>−3.2 / −3.2 / −3.6</td><td>입 쪽으로 밀어 넣으며 한입(자국 1 → 자국 2 → 전부). 부스러기 6개씩.</td></tr>
+  <tr><td>0.4–3.7</td><td>0</td><td>씹는 입, 눈이 0.3초 주기로 들썩임.</td></tr>
+  <tr><td>2.66–4.1</td><td>—</td><td>빈 젓가락이 오므라짐(−1.8°).</td></tr>
+  <tr><td>3.7 → 4.62</td><td>0 → 40</td><td>팔을 내림. 눈은 접시 쪽(−5,+7)을 봄. 4.55에 젓가락이 벌어짐(+3°).</td></tr>
+  <tr><td>4.62–4.95</td><td>40 → 41.5 → 39.5</td><td>살짝 눌러 집음. 부침개가 4.74–4.90에 서서히 나타남.</td></tr>
+  <tr><td>4.95 → 6.1 → 6.4</td><td>39.5 → −1.2 → 0</td><td>들어 올리며 납작함이 1.0으로 돌아옴. 끝에 살짝 넘쳤다 제자리.</td></tr>
+  <tr><td>7.62–8.0</td><td>0</td><td>입을 벌려 다음 주기의 첫 한입으로 이어짐.</td></tr>
+</table></div>
+
+<h2>5. Python 코드의 역할</h2>
+
+<h3>build/layers.py — 분리와 복원</h3>
+<div class="wrap"><table>
+  <tr><th>구간 / 함수</th><th>역할</th></tr>
+  <tr><td><code>poly_mask</code>, <code>line_mask</code></td><td>4배 해상도에서 그린 뒤 축소해 안티앨리어싱된 마스크를 만든다.</td></tr>
+  <tr><td><code>ARM</code>, <code>STICK_U/L</code>, 부침개 HSV 분할</td><td>움직일 대상의 마스크.</td></tr>
+  <tr><td><code>dil</code>, <code>feather_comp</code></td><td>마스크 팽창, 경계를 흐려 원본과 채움을 섞는 합성.</td></tr>
+  <tr><td>1. 눈·볼 점 (<code>SEEDS</code>, <code>WINS</code>, <code>own</code>, <code>glow</code>)</td><td>밝은 연결 성분을 스프라이트별로 배정하고, 배경에서 지워 <code>bg0</code>를 만든다.</td></tr>
+  <tr><td>2. holes (<code>hole_j</code>, <code>hole_a</code>, <code>known</code>)</td><td>메울 영역, 그리고 원본을 그대로 믿을 수 있는 픽셀.</td></tr>
+  <tr><td><code>curve</code>, <code>E</code>, <code>C</code>, <code>wE</code>, <code>wC</code></td><td>화면 경계·턱 곡선과 안티앨리어싱 가중치.</td></tr>
+  <tr><td>3. <code>reflector</code>, <code>torso</code>, <code>Mt</code>, <code>shade</code></td><td>수직축 반사로 몸통 복원, 턱 그림자.</td></tr>
+  <tr><td><code>nc_fill</code>, <code>dark</code>, <code>white</code>, <code>face</code>, <code>Mf</code></td><td>색 영역별 정규화 컨볼루션 채움과 그 합성.</td></tr>
+  <tr><td><code>SHOULDER</code>, <code>fol</code>, <code>Mo</code></td><td>어깨 외곽선을 다듬고 그 밖을 단풍 배경으로 채움.</td></tr>
+  <tr><td>4. rest → Telea, <code>bg</code></td><td>남은 구멍을 메우고 최종 배경 완성.</td></tr>
+  <tr><td>foreground layers (<code>rgba_crop</code>)</td><td>arm / jeon / eye·dot 스프라이트를 저장하고 <code>meta.json</code>에 박스 좌표를 기록.</td></tr>
+</table></div>
+
+<h3>build/build_svg.py — 조립</h3>
+<div class="wrap"><table>
+  <tr><th>구간 / 함수</th><th>역할</th></tr>
+  <tr><td><code>b64</code>, <code>img</code></td><td>PNG → WebP(q≈90) base64 data URI로 바꾸고, <code>meta.json</code> 좌표에 <code>&lt;image&gt;</code>로 배치.</td></tr>
+  <tr><td><code>EASE</code>, <code>kf</code>, <code>at</code>, <code>disc</code>, <code>vis</code></td><td>키프레임 목록 → SMIL 속성 문자열(spline / discrete / 보임 구간).</td></tr>
+  <tr><td><code>ARM</code>, <code>CHOMPS</code></td><td>타임라인의 기준. 팔 회전, 부침개 역회전(<code>counter</code>), <code>squash</code>, <code>jeon_vis</code>, <code>pinch</code>가 모두 여기서 파생된다.</td></tr>
+  <tr><td><code>BITES</code> → <code>#bite</code> mask</td><td>한입 자국 원들.</td></tr>
+  <tr><td><code>stick</code></td><td>끝으로 갈수록 가늘어지는 나무 젓가락 폴리곤과 하이라이트.</td></tr>
+  <tr><td><code>crumbs</code>, <code>eye_frames</code>, <code>MOUTH</code></td><td>부스러기, 눈 움직임, 입 세 가지 상태.</td></tr>
+  <tr><td><code>LEAF</code>/<code>leaves</code>, <code>steam</code>, 빛 ellipse</td><td>분위기 효과. 8초 주기와 따로 도는 독립 시계.</td></tr>
+</table></div>
+
+<h3>저장소에 넣지 않은 보조 스크립트 (세션 scratchpad에서만 사용)</h3>
+<div class="wrap"><table>
+  <tr><th>스크립트</th><th>역할</th><th>다음에 다시 만들 가치</th></tr>
+  <tr><td><code>grid.py</code></td><td>임의 영역을 확대하고 원본 좌표 격자와 라벨을 덧그림.</td><td>높음 — 좌표 잡기의 기본 도구.</td></tr>
+  <tr><td><code>preview.py</code></td><td>레이어를 PIL로 합성해 특정 각도·자세를 정지 이미지로 렌더.</td><td>높음 — SVG 없이 기하 검증.</td></tr>
+  <tr><td>마스크 겹쳐 칠하기, 밝기값 출력, 중간 결과 저장</td><td>마스크 과잉, 경계 위치, 채움 누수를 진단.</td><td>상황별 일회용.</td></tr>
+</table></div>
+
+<h2>6. 검증 방법</h2>
+<ol>
+  <li><b>정지 합성</b>: <code>preview.py</code>로 0/20/40°와 집는 자세 확인. 팔을 든 자세가 원본과 같은지 확인.</li>
+  <li><b>SMIL 구조 검사</b>: XML을 파싱해 values·keyTimes 개수, keySplines 개수(= keyTimes − 1), 증가 순서를 확인.</li>
+  <li><b>브라우저 상태 검사</b>: <code>svg.pauseAnimations()</code> + <code>svg.setCurrentTime(t)</code> 후 <code>getCTM()</code>으로 팔 각도, <code>getComputedStyle().opacity</code>, <code>circle.r.animVal</code>을 읽어 타임라인과 비교.</li>
+  <li><b>시각 검사</b>(사용자 허락 후): 같은 방식으로 시점을 고정하고, <code>viewBox</code>를 좁혀 부분 확대 → 스크린샷.</li>
+</ol>
+
+<h3>시각 검증에서 잡은 버그</h3>
+<div class="card">
+  <p><b>눈 스프라이트 잘림</b> — 눈이 아래를 볼 때(4.2s) 눈 끝이 잘리고 원래 눈 자국과 사각형 테두리가 보였다. 원인은 고정 박스가 실제 눈과 빛번짐보다 작았던 것. 연결 성분 기반으로 바꾸고, 알파가 0이 되는 지점까지 박스를 넓혀 해결했다. 이 과정에서 두 번 더 실수가 있었다. 흰 외피가 “눈”으로 잡혀 박스가 커졌고, 볼 점 옆의 화면 테두리도 잡혔다. 스프라이트별 창 안에 완전히 들어오는 성분만 받도록 해서 해결했다.</p>
+  <p><b>낙엽이 별처럼 보임</b> — 30px짜리 뾰족한 도형이라 빨간 별로 읽혔다. 50–60px, 잎자루·잎맥·그라데이션, 좌우 스케일 뒤집기로 팔랑임을 넣어 해결. <code>linearGradient</code>의 objectBoundingBox 좌표는 0–1이다(−1로 썼다가 고침).</p>
+</div>
+<div class="lesson">교훈: 좌표·상태 검사만으로는 “움직였을 때 드러나는 이음새”를 못 잡는다. 정지 상태에서 완벽해도 스프라이트가 움직이면 박스 경계와 지우다 남은 자국이 보인다. <b>움직이는 모든 스프라이트는 가장 멀리 이동한 시점에서 확대해 봐야 한다.</b></div>
+
+<h2>7. 비슷한 작업 체크리스트</h2>
+<ol>
+  <li>도구 확인: Python 패키지가 없으면 <code>uv run --with …</code>.</li>
+  <li>움직일 부분을 정하고, 회전축·이동 범위를 먼저 계산한다(예: 40° 회전하면 끝점이 목표에 닿는가).</li>
+  <li>좌표 격자 크롭으로 폴리곤을 잡는다. 애매한 경계는 밝기값을 찍어 본다.</li>
+  <li>색 분할 마스크는 반드시 겹쳐 칠해 확인한다(조명을 받은 흰색이 쉽게 섞인다).</li>
+  <li>드러날 영역을 성격별로 나눠 복원한다: 대칭 → 반사(축은 실측, 기울기 가정 주의), 단색 면 → 같은 색끼리만 채움, 두 면의 경계 → 곡선을 직접 정의, 배경 질감 → Telea.</li>
+  <li>기준 자세에서 원본과 같은지 확인한다.</li>
+  <li>극단 자세들을 정지 합성으로 미리 본다.</li>
+  <li>SVG: 변형마다 &lt;g&gt; 중첩, 공통 dur + keyTimes, 사라지는 것은 mask + discrete, 반복 경계(t=0 = t=T)의 연속성 확인.</li>
+  <li>브라우저에서 <code>setCurrentTime</code>으로 상태를 검사하고, 움직이는 스프라이트는 최대 이동 시점에서 확대해 본다.</li>
+  <li>원본에 없는 요소(여기서는 입, 효과)는 목록으로 남겨 사용자에게 알린다.</li>
+</ol>
+
+<p class="muted" style="margin-top:40px"><small>이 문서의 좌표는 모두 원본 1536×1024 픽셀 기준이다.</small></p>
+</main>
+</body>
+</html>
