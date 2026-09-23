@@ -2,6 +2,8 @@
 
 정지 일러스트 한 장(`source/chuseok.webp`)을 레이어로 분리해, 한복 입은 로봇이 전을 집어 먹는 8초 루프 애니메이션 SVG로 만든다.
 
+![한복 입은 로봇이 전을 집어 먹는 추석 인사 애니메이션](chuseok-robot.svg)
+
 ## 결과물
 
 - `chuseok-robot.svg` — 이미지가 모두 내장된 애니메이션 SVG
